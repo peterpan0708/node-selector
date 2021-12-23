@@ -37,7 +37,7 @@ type Node struct {
 }
 
 func (n *Node) GetHeight(url string, domain int) (height []int64, chainId []int64, timestamp []int64) {
-    request, err := http.NewRequest("GET", url+"/chainweb/0.0/mainnet01/header/updates", nil)
+    request, err := http.NewRequest("GET", "http://"+url+":1848/chainweb/0.0/mainnet01/header/updates", nil)
     request.Header.Add("Connection", "keep-alive")
     request.Header.Add("Pragma", "no-cache")
     request.Header.Add("Cache-Control", "no-cache")
@@ -56,7 +56,9 @@ func (n *Node) GetHeight(url string, domain int) (height []int64, chainId []int6
     http_client := &http.Client{}
     response, err := http_client.Do(request)
     if err != nil {
-        log.Fatal(err)
+        fmt.Printf("An error occurred in the Node:%s, error is %s \n", url, err)
+        //log.Fatal(err)
+        return
     }
 
     buf := make([]byte, 4096)
@@ -67,18 +69,22 @@ func (n *Node) GetHeight(url string, domain int) (height []int64, chainId []int6
         }
 
         var data Data
+        //fmt.Println("!!!")
+        //fmt.Println(string(buf[:n]))
+        //fmt.Println("???")
         if err := json.Unmarshal(buf[23:n], &data); err == nil {
-            height = append(height, data.Header.Height)
-            chainId = append(chainId, data.Header.ChainId)
-            timestamp = append(timestamp, time.Now().Unix())
-            //fmt.Println("Height:", data.Header.Height)
-            //fmt.Println("ChainId:", data.Header.ChainId)
-            if len(height) >= domain {
-                return
-            }
+           height = append(height, data.Header.Height)
+           chainId = append(chainId, data.Header.ChainId)
+           timestamp = append(timestamp, time.Now().Unix())
+           //fmt.Println("Height:", data.Header.Height)
+           //fmt.Println("ChainId:", data.Header.ChainId)
+           if len(height) >= domain {
+               return
+           }
         } else {
-            fmt.Printf("An error occurred in the Node:%s, error is %s \n", url, err)
-            //fmt.Println(string(buf[:n]))
+           fmt.Printf("An error occurred in the Node:%s, error is %s \n", url, err)
+           //fmt.Println(string(buf[:n]))
+           //fmt.Println("Unmarshal part:", string(buf[23:n]))
         }
         //fmt.Printf("%s", buf[:n])
     }

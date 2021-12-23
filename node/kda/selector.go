@@ -13,14 +13,13 @@ type Selector struct {
 var k Node
 
 func (s *Selector) Selector(urls []string, domain int) (urlFastest string) {
-    duration := time.Second * 60
+    duration := time.Second * 10
     timer := time.NewTimer(duration)
     conn, err := redis.Dial("tcp", "127.0.0.1:6379")
     if err != nil {
         fmt.Println("redis.Dial err=", err)
         return
     }
-    defer conn.Close()
     go func() {
         for {
             select {
@@ -69,13 +68,17 @@ func (s *Selector) Selector(urls []string, domain int) (urlFastest string) {
                         ip2 = append(ip2, timestampAll[i])
                         delayI := CompareKda(ip1, ip2)
                         delay1[i] = delayI
+                        //fmt.Println("序号：",i,"长度：",len(heightAll[i]))
+                        if len(heightAll[i]) == 0{
+                            delay1[i] = 100
+                        }
                         wg.Done()
                     }(j)
                 }
                 wg.Wait()
 
                 delay := delay1[0:len(urls)]
-                //fmt.Println("delay:", delay)
+                fmt.Println("delay:", delay)
                 kmin := 0
                 vmin := float64(0)
                 for k, v := range delay {
@@ -86,8 +89,12 @@ func (s *Selector) Selector(urls []string, domain int) (urlFastest string) {
                 }
 
                 urlFastest = urls[kmin]
-                fmt.Println(urlFastest)
+                fmt.Println("最快的节点为:", urlFastest)
                 _, err = conn.Do("Set", "node:kda", urlFastest)
+                if err != nil {
+                    fmt.Println("redis.Dial err=", err)
+                    return
+                }
                 timer.Reset(duration)
             }
         }
@@ -97,15 +104,18 @@ func (s *Selector) Selector(urls []string, domain int) (urlFastest string) {
 
 func CompareKda(ip1 [][]int64, ip2 [][]int64) (delay float64) {
     delayAll := int64(0)
-    l := len(ip1[0])
+    // 修改为严格计数
+    l := 0
 
     for k1, v1 := range ip1[0] {
         for k2, v2 := range ip2[0] {
             if v1 == v2 && ip1[1][k1] == ip2[1][k2] {
                 delayAll += ip2[2][k2] - ip1[2][k1]
+                l++
             }
         }
     }
+    fmt.Println("实际有效统计数:", l)
     delay = float64(delayAll) / float64(l)
     return
 }

@@ -52,13 +52,13 @@ func main() {
     var k Kda
 
     go func() {
-        url := "http://139.196.143.4:1848"
-        h, c, t := k.getHeight(url)
-        fmt.Println(url)
-        fmt.Println(h, c, t)
-        h1 <- h
-        c1 <- c
-        t1 <- t
+       url := "http://52.199.102.11:1848"
+       h, c, t := k.getHeight(url)
+       fmt.Println(url)
+       fmt.Println(h, c, t)
+       h1 <- h
+       c1 <- c
+       t1 <- t
     }()
     go func() {
         url := "http://47.101.48.191:1848"
