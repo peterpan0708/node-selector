@@ -1,12 +1,22 @@
 package kda
 
 import (
+    "context"
     "encoding/json"
     "fmt"
+    "gopkg.in/redis.v5"
     "log"
+    "net"
     "net/http"
     "time"
 )
+
+type Node struct {
+    RedisClint *redis.Client
+    ctx context.Context
+    ctxCancel func()
+    NetClient *net.TCPConn
+}
 
 type Data struct {
     TxCount int64  `json:"txCount"`
@@ -33,8 +43,42 @@ type Data struct {
     Target string `json:"target"`
 }
 
-type Node struct {
+func (n *Node) Start() {
+
 }
+
+// DiagnoseNode 诊断节点的健康性
+func (n *Node) DiagnoseNode()  {
+
+}
+
+// isNodePortAccessible 端口是否通畅
+func (n *Node) isNodePortAccessible()  {
+    
+}
+
+// isHeightBlocked 高度是否停滞
+func (n *Node) isHeightBlocked()  {
+    
+}
+
+// isLongConnectionBlock 推送是否堵塞
+func (n *Node) isLongConnectionBlock()  {
+    
+}
+
+// isCrashed 全网是否崩溃
+func (n *Node) isCrashed()  {
+    
+}
+
+// getFastestNode 获取最快的节点
+func (n *Node) getFastestNode()  {
+    
+}
+
+
+
 
 func (n *Node) GetHeight(url string, domain int) (height []int64, chainId []int64, timestamp []int64) {
     request, err := http.NewRequest("GET", "http://"+url+":1848/chainweb/0.0/mainnet01/header/updates", nil)

@@ -1,16 +1,20 @@
-package main
+package api
 
 import (
     "encoding/json"
     "fmt"
-    "github.com/garyburd/redigo/redis"
     "github.com/labstack/echo/v4"
+    "gopkg.in/redis.v5"
     "log"
     "net/http"
-    "node-selector/node/kda"
+    "node-selector/cmd/node/kda"
+    redisOperation "node-selector/tools/redis"
     "os"
     "path/filepath"
 )
+type Api struct {
+    RedisClient *redis.Client
+}
 
 type Config struct {
     Nodes []struct {
@@ -22,9 +26,17 @@ type Config struct {
 
 var cfg Config
 
-func main() {
-    readConfig(&cfg)
+func (a *Api) CreateServer() {
+    a.readConfig(&cfg)
     var s kda.Selector
+    client := redis.NewClient(&redis.Options{
+        Addr:     "127.0.0.1:6379",
+        Password: "", // no password set
+        DB:       0,  // use default DB
+    })
+    s.RedisClient = client
+    a.RedisClient =client
+
     for _, node := range cfg.Nodes {
         if node.Coin == "kda" {
             s.Selector(node.Urls, node.Domain)
@@ -34,11 +46,11 @@ func main() {
     e.GET("/", func(context echo.Context) error {
         return context.String(http.StatusOK, "node-selector (* ￣︿￣)")
     })
-    e.GET("/node/:coin", getNode)
+    e.GET("/node/:coin", a.getNode)
     e.Logger.Fatal(e.Start(":9826"))
 }
 
-func readConfig(cfg *Config) {
+func (a *Api) readConfig(cfg *Config) {
     configFileName := "config.json"
     if len(os.Args) > 1 {
         configFileName = os.Args[1]
@@ -57,16 +69,16 @@ func readConfig(cfg *Config) {
     }
 }
 
-func getNode(c echo.Context) error {
+func (a *Api) getNode(c echo.Context) error {
     coin := c.Param("coin")
-    conn, err := redis.Dial("tcp", "127.0.0.1:6379")
-    if err != nil {
-        fmt.Println("redis.Dial err=", err)
-        return c.String(http.StatusOK, "failed to connect redis")
-    }
-    defer conn.Close()
+    //conn, err := redis.Dial("tcp", "127.0.0.1:6379")
+    //if err != nil {
+    //    fmt.Println("redis.Dial err=", err)
+    //    return c.String(http.StatusOK, "failed to connect redis")
+    //}
+    //defer conn.Close()
 
-    node, err := redis.String(conn.Do("GET", "node:"+coin))
+    node, err := redisOperation.Get(a.RedisClient, "node:"+coin).Result()
     if err != nil {
         fmt.Println("redis.Dial err=", err)
         return c.String(http.StatusOK, "failed to get kda node")

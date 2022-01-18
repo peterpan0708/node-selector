@@ -1,13 +1,20 @@
 package kda
 
 import (
+    "context"
     "fmt"
-    "github.com/garyburd/redigo/redis"
+    "gopkg.in/redis.v5"
+    "net"
+    redisOperation "node-selector/tools/redis"
     "sync"
     "time"
 )
 
 type Selector struct {
+    RedisClient *redis.Client
+    ctx context.Context
+    ctxCancel func()
+    NetClient *net.TCPConn
 }
 
 var k Node
@@ -15,11 +22,11 @@ var k Node
 func (s *Selector) Selector(urls []string, domain int) (urlFastest string) {
     duration := time.Second * 10
     timer := time.NewTimer(duration)
-    conn, err := redis.Dial("tcp", "127.0.0.1:6379")
-    if err != nil {
-        fmt.Println("redis.Dial err=", err)
-        return
-    }
+    //conn, err := redis.Dial("tcp", "127.0.0.1:6379")
+    //if err != nil {
+    //    fmt.Println("redis.Dial err=", err)
+    //    return
+    //}
     go func() {
         for {
             select {
@@ -66,10 +73,10 @@ func (s *Selector) Selector(urls []string, domain int) (urlFastest string) {
                         ip2 = append(ip2, heightAll[i])
                         ip2 = append(ip2, chainIdAll[i])
                         ip2 = append(ip2, timestampAll[i])
-                        delayI := CompareKda(ip1, ip2)
+                        delayI := CompareKda(ip1, ip2, len(heightAll[0]))
                         delay1[i] = delayI
                         //fmt.Println("序号：",i,"长度：",len(heightAll[i]))
-                        if len(heightAll[i]) == 0{
+                        if len(heightAll[i]) == 0 {
                             delay1[i] = 100
                         }
                         wg.Done()
@@ -90,7 +97,7 @@ func (s *Selector) Selector(urls []string, domain int) (urlFastest string) {
 
                 urlFastest = urls[kmin]
                 fmt.Println("最快的节点为:", urlFastest)
-                _, err = conn.Do("Set", "node:kda", urlFastest)
+                _, err := redisOperation.Set(s.RedisClient,"node:kda", urlFastest).Result()
                 if err != nil {
                     fmt.Println("redis.Dial err=", err)
                     return
@@ -102,7 +109,7 @@ func (s *Selector) Selector(urls []string, domain int) (urlFastest string) {
     return
 }
 
-func CompareKda(ip1 [][]int64, ip2 [][]int64) (delay float64) {
+func CompareKda(ip1 [][]int64, ip2 [][]int64, len int) (delay float64) {
     delayAll := int64(0)
     // 修改为严格计数
     l := 0
@@ -116,6 +123,11 @@ func CompareKda(ip1 [][]int64, ip2 [][]int64) (delay float64) {
         }
     }
     fmt.Println("实际有效统计数:", l)
+
+    // 如果统计数据量<80%，则判定统计失效
+    if l < len*4/5 {
+        delay = 100
+    }
     delay = float64(delayAll) / float64(l)
     return
 }
