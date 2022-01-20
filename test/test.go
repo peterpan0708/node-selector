@@ -6,12 +6,16 @@ import (
     "encoding/json"
     "fmt"
     "github.com/asmcos/requests"
+    "gopkg.in/redis.v5"
     "io"
     "log"
     "net/http"
+    redisOperation "node-selector/tools/redis"
     "strconv"
     "time"
 )
+
+// 本质上是做了一个加权评分系统
 
 func main() {
     healthCheck := make(chan interface{})
@@ -52,6 +56,32 @@ func main() {
 
     time.Sleep(100 * time.Second)
 }
+
+//// isHeightBlocked 高度是否停滞,如果停滞,healthCheck输出-1,当main里检测到-1之后,健康得分-5
+//func isHeightBlocked(url string, healthCheck chan interface{}) {
+//    client := redis.NewClient(&redis.Options{
+//        Addr:     "127.0.0.1:6379",
+//        Password: "", // no password set
+//        DB:       0,  // use default DB
+//    })
+//    RedisClient := client
+//
+//    keys, err := redisOperation.Keys(RedisClient, "kda:47.101.48.191").Result()
+//    if err != nil {
+//        fmt.Println("redis get kda data error=", err.Error())
+//        return
+//    }
+//    for _, v := range keys {
+//        timeStamp, err := redisOperation.Get(RedisClient, v).Result()
+//        t, err := strconv.ParseInt(timeStamp, 10, 64)
+//        if err != nil {
+//            fmt.Println("strconv.ParseInt err=", err)
+//            return
+//        }
+//
+//    }
+//
+//}
 
 type CutResp struct {
     Hashes map[string]struct {
@@ -184,51 +214,47 @@ func GetUpdatesWithFunc(url string, handleConnection func(conn io.ReadCloser, he
 }
 
 func HandleConnection(conn io.ReadCloser, healthCheck chan interface{}) {
-    duration := time.Second * 1
-    timer := time.NewTimer(duration)
-
     go func() {
+        client := redis.NewClient(&redis.Options{
+            Addr:     "127.0.0.1:6379",
+            Password: "", // no password set
+            DB:       0,  // use default DB
+        })
+        RedisClient := client
+
+        var timeStampList []int64
         for {
-            select {
-            case <-timer.C:
-                buf := make([]byte, 4096)
-                n, err := conn.Read(buf)
-                if n == 0 && err != nil { // simplified
-                    break
+            buf := make([]byte, 4096)
+            n, err := conn.Read(buf)
+            if n == 0 && err != nil { // simplified
+                break
+            }
+
+            var data Data
+            if err = json.Unmarshal(buf[23:n], &data); err == nil {
+                height := data.Header.Height
+                chainId := data.Header.ChainId
+                timestamp := time.Now().Unix()
+
+                key := "kda:" + strconv.FormatInt(height, 10) + ":" + strconv.FormatInt(chainId, 10)
+                value := strconv.FormatInt(timestamp, 10)
+                fmt.Println("key:", key)
+                fmt.Println("value:", value)
+
+                _, err := redisOperation.SetEX(RedisClient, key, "3600", value).Result()
+                if err != nil {
+                    fmt.Println("redis set ltc data error=", err.Error())
                 }
-
-                var data Data
-                //fmt.Println("!!!")
-                //fmt.Println(string(buf[:n]))
-                //fmt.Println("???")
-                if err = json.Unmarshal(buf[23:n], &data); err == nil {
-                    //fmt.Println(data)
-                    height := data.Header.Height
-                    chainId := data.Header.ChainId
-                    timestamp := time.Now().Unix()
-
-                    key := "kda:" + strconv.FormatInt(height, 10) + ":" + strconv.FormatInt(chainId, 10)
-                    fmt.Println("key:", key)
-                    fmt.Println("value:", timestamp)
-
-                    //fmt.Println("Height:", data.Header.Height)
-                    //fmt.Println("ChainId:", data.Header.ChainId)
-
-                    //if len(height) >= 5 {
-                    //    healthCheck <- 1003
-                    //    //return
-                    //}
-
-                    //fmt.Println(height)
-                    healthCheck <- 1003
-                } else {
-                    fmt.Printf("An error occurred in the Node:%s, error is %s \n", "111", err)
-                    healthCheck <- 0
-                    //fmt.Println(string(buf[:n]))
-                    //fmt.Println("Unmarshal part:", string(buf[23:n]))
+                healthCheck <- 1003
+                if len(timeStampList) > 10 {
+                    timeStampList = timeStampList[1:]
+                    //fmt.Println(healthList)
                 }
-                //fmt.Printf("%s", buf[:n])
-                timer.Reset(duration)
+                timeStampList = append(timeStampList, timestamp)
+
+            } else {
+                fmt.Printf("An error occurred in the Node:%s, error is %s \n", "111", err)
+                //healthCheck <- 0
             }
         }
     }()

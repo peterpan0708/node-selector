@@ -49,6 +49,20 @@ func Set(client *redis.Client, key string, value string) *redis.StringCmd {
 //  @return *redis.StringSliceCmd
 //
 func Keys(client *redis.Client, key string) *redis.StringSliceCmd {
-    stringSliceCmd := client.Keys(key)
+    stringSliceCmd := client.Keys(key+":*")
     return stringSliceCmd
+}
+
+//
+// SetEX
+//  @Description: redis存储数据
+//  @param client
+//  @param key
+//  @param value
+//  @return *redis.StringCmd
+//
+func SetEX(client *redis.Client, key string, time string, value string) *redis.StringCmd {
+    cmd := redis.NewStringCmd("SET", key, time, value)
+    client.Process(cmd)
+    return cmd
 }
