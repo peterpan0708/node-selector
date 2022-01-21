@@ -49,7 +49,7 @@ func Set(client *redis.Client, key string, value string) *redis.StringCmd {
 //  @return *redis.StringSliceCmd
 //
 func Keys(client *redis.Client, key string) *redis.StringSliceCmd {
-    stringSliceCmd := client.Keys(key+":*")
+    stringSliceCmd := client.Keys(key+"*")
     return stringSliceCmd
 }
 

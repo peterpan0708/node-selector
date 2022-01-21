@@ -16,6 +16,7 @@ import (
     "node-selector/configs"
     redisOperation "node-selector/tools/redis"
     "strconv"
+    "strings"
     "time"
 )
 
@@ -364,7 +365,13 @@ func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64, u
                     fmt.Println("redis set kda data error=", err.Error())
                 }
                 healthCheck <- 1003
-                if len(timeStampList) > 10 {
+                if len(timeStampList) > 9 {
+                    // 如果1s内出了超过10个块,则判定不健康
+                    if timeStampList[len(timeStampList)-1]-timeStampList[0] < 2 {
+                        healthCheck <- 0
+                        healthCheck <- 0
+                        healthCheck <- 0
+                    }
                     timeStampList = timeStampList[1:]
                     //fmt.Println(healthList)
                 }
@@ -372,7 +379,6 @@ func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64, u
 
             } else {
                 fmt.Printf("An error occurred in the Node:%s, error is %s \n", "111", err)
-                //healthCheck <- 0
                 //healthCheck <- 0
             }
         }
@@ -442,22 +448,71 @@ func (node *Node) GetFastestNode(lanUrls []string, wanUrls []string) string {
         // 在healthyWanUrls中选择最快的
         fmt.Println("局域网内所有节点崩溃")
 
-        for healthyWanUrl := range healthyWanUrls {
+        for _, healthyWanUrl := range healthyWanUrls {
             fmt.Println(healthyWanUrl)
         }
     } else if len(healthyLanUrls) == 1 {
         return healthyLanUrls[0]
     } else if len(healthyLanUrls) > 1 {
         // 在healthyWanUrls中选择最快的
-        for healthyLanUrl := range healthyLanUrls {
+        for _, healthyLanUrl := range healthyLanUrls {
             fmt.Println(healthyLanUrl)
         }
     }
     return "0"
 }
 
+// 通过redis里存储的各个url的出块时间,随便选一个url作为参照物,计算出每个url的delay,存入redis中
 func (node *Node) calculateDelay(urls []string) {
-    for url := range urls {
-        fmt.Println(url)
+    // 随机选一个作为参照物
+    referenceUrl := urls[0]
+    // 将其他与参照物作对比
+    for _, url := range urls {
+        var delays []int64
+
+        // 取出该url的所有
+        s := "kda:" + url + ":"
+        keys, err := redisOperation.Keys(node.RedisClient, s).Result()
+        if err != nil {
+            fmt.Println("redis keys err=", err)
+            return
+        }
+        for _, key := range keys {
+            timeStampString, err := redisOperation.Get(node.RedisClient, key).Result()
+            if err != nil {
+                fmt.Println("redis get err=", err)
+                return
+            }
+
+            // 寻找参照url的timestamp,如果找不到,就
+            referenceKey := strings.Replace(key, url, referenceUrl, 1)
+            fmt.Println(referenceKey)
+            referenceTimeStampString, err := redisOperation.Get(node.RedisClient, referenceKey).Result()
+            if err != nil {
+                fmt.Println("redis get err=", err)
+                break
+            }
+            timeStamp, err := strconv.ParseInt(timeStampString, 10, 64)
+            referenceTimeStamp, err := strconv.ParseInt(referenceTimeStampString, 10, 64)
+            delayOnce := timeStamp - referenceTimeStamp
+            delays = append(delays, delayOnce)
+        }
+        if (len(delays)) > 0 {
+            var delaySum int64
+            delaySum = 0
+            for _, v := range delays {
+                delaySum = delaySum + v
+            }
+            delay := float64(delaySum) / float64(len(delays))
+
+            delayKey := "kda:delay:" + url
+            delayValue := strconv.FormatFloat(delay, 'f', 4, 64)
+
+            _, err = redisOperation.Set(node.RedisClient, delayKey, delayValue).Result()
+            if err != nil {
+                fmt.Println("redis set err=", err)
+                return
+            }
+        }
     }
 }

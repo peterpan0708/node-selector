@@ -3,7 +3,6 @@ package main
 import (
     "bytes"
     "crypto/tls"
-    "encoding/hex"
     "encoding/json"
     "fmt"
     "github.com/asmcos/requests"
@@ -13,6 +12,7 @@ import (
     "net/http"
     redisOperation "node-selector/tools/redis"
     "strconv"
+    "strings"
     "time"
 )
 
@@ -286,51 +286,119 @@ type Data struct {
     Target string `json:"target"`
 }
 
-func main()  {
-    url := "1.1.1.1"
-    //url := "47.101.48.191"
+//func main()  {
+//    url := "1.1.1.1"
+//    //url := "47.101.48.191"
+//
+//    body := "{\n    \"account\": \"96569b08da3a631b1ca7f2cc768f2f14723510ace3b36b36f3be07f233d65596\",\n    \"predicate\": \"keys-all\",\n    \"public-keys\": [\n        \"96569b08da3a631b1ca7f2cc768f2f14723510ace3b36b36f3be07f233d65596\"\n    ]\n}"
+//    strJson := []byte(body)
+//    buffJson := bytes.NewBuffer(strJson)
+//    request, err := http.NewRequest("GET", "http://"+url+":1848/chainweb/0.0/mainnet01/mining/work?chain=0", buffJson)
+//    request.Header.Add("Connection", "keep-alive")
+//    request.Header.Add("Content-Type", "application/json;charset=utf-8")
+//    request.Header.Add("Transfer-Encoding", "chunked")
+//
+//    if err != nil {
+//        log.Fatal(err)
+//    }
+//    // 超时时间
+//    http_client := &http.Client{Timeout: time.Second}
+//    response, err := http_client.Do(request)
+//    if err != nil {
+//        fmt.Printf("An error occurred in the Node:%s, error is %s \n", url, err)
+//        fmt.Println("123")
+//        //healthCheck <- 0
+//        //log.Fatal(err)
+//        //return
+//    }else {
+//        //defer response.Body.Close()
+//
+//        buf := make([]byte, 1024)
+//        n, err := response.Body.Read(buf)
+//        if n == 0 && err != nil {
+//            fmt.Printf("An error occurred in the Node:%s, error is %s \n", url, err)
+//            //healthCheck <- 0
+//            //log.Fatal(err)
+//            //return
+//        } else {
+//            s := hex.EncodeToString(buf[:n])
+//            fmt.Println(s)
+//            //healthCheck <- 1002
+//        }
+//        //fmt.Println(string(buf[:n]))
+//        //fmt.Println(string(buf))
+//        //
+//
+//        //s := hex.EncodeToString(buf[:n])
+//        //fmt.Println(s)
+//        //timer.Reset(duration)
+//    }
+//}
 
-    body := "{\n    \"account\": \"96569b08da3a631b1ca7f2cc768f2f14723510ace3b36b36f3be07f233d65596\",\n    \"predicate\": \"keys-all\",\n    \"public-keys\": [\n        \"96569b08da3a631b1ca7f2cc768f2f14723510ace3b36b36f3be07f233d65596\"\n    ]\n}"
-    strJson := []byte(body)
-    buffJson := bytes.NewBuffer(strJson)
-    request, err := http.NewRequest("GET", "http://"+url+":1848/chainweb/0.0/mainnet01/mining/work?chain=0", buffJson)
-    request.Header.Add("Connection", "keep-alive")
-    request.Header.Add("Content-Type", "application/json;charset=utf-8")
-    request.Header.Add("Transfer-Encoding", "chunked")
+func main() {
 
-    if err != nil {
-        log.Fatal(err)
-    }
-    // 超时时间
-    http_client := &http.Client{Timeout: time.Second}
-    response, err := http_client.Do(request)
-    if err != nil {
-        fmt.Printf("An error occurred in the Node:%s, error is %s \n", url, err)
-        fmt.Println("123")
-        //healthCheck <- 0
-        //log.Fatal(err)
-        //return
-    }else {
-        //defer response.Body.Close()
-
-        buf := make([]byte, 1024)
-        n, err := response.Body.Read(buf)
-        if n == 0 && err != nil {
-            fmt.Printf("An error occurred in the Node:%s, error is %s \n", url, err)
-            //healthCheck <- 0
-            //log.Fatal(err)
-            //return
-        } else {
-            s := hex.EncodeToString(buf[:n])
-            fmt.Println(s)
-            //healthCheck <- 1002
-        }
-        //fmt.Println(string(buf[:n]))
-        //fmt.Println(string(buf))
-        //
-
-        //s := hex.EncodeToString(buf[:n])
+    client := redis.NewClient(&redis.Options{
+        Addr:     "127.0.0.1:6379",
+        Password: "", // no password set
+        DB:       0,  // use default DB
+    })
+    RedisClient := client
+    var urls []string
+    urls = append(urls, "47.101.48.191")
+    urls = append(urls, "54.95.228.181")
+    urls = append(urls, "52.199.102.11")
+    urls = append(urls, "13.212.166.153")
+    urls = append(urls, "15.222.24.176")
+    urls = append(urls, "3.123.189.173")
+    // 随机选一个作为参照物
+    referenceUrl := urls[0]
+    // 将其他与参照物作对比
+    for _, url := range urls {
+        var delays []int64
+        // 取出该url的所有
+        s := "kda:" + url + ":"
         //fmt.Println(s)
-        //timer.Reset(duration)
+        keys, err := redisOperation.Keys(RedisClient, s).Result()
+        if err != nil {
+            fmt.Println("redis keys err=", err)
+            return
+        }
+        for _, key := range keys {
+            timeStampString, err := redisOperation.Get(RedisClient, key).Result()
+            if err != nil {
+                fmt.Println("redis get err=", err)
+                break
+            }
+
+            referenceKey := strings.Replace(key, url, referenceUrl, 1)
+            fmt.Println(key)
+            fmt.Println(referenceKey)
+            referenceTimeStampString, err := redisOperation.Get(RedisClient, referenceKey).Result()
+            if err != nil {
+                fmt.Println("redis get err=", err)
+                break
+            }
+            timeStamp, err := strconv.ParseInt(timeStampString, 10, 64)
+            referenceTimeStamp, err := strconv.ParseInt(referenceTimeStampString, 10, 64)
+            delayOnce := timeStamp - referenceTimeStamp
+            delays = append(delays, delayOnce)
+        }
+        if (len(delays)) >0 {
+            var delaySum int64
+            delaySum = 0
+            for _, v := range delays {
+                delaySum = delaySum + v
+            }
+            delay := float64(delaySum)/float64(len(delays))
+
+            delayKey := "kda:delay:" + url
+            delayValue := strconv.FormatFloat(delay,'f',4,64)
+
+            _, err = redisOperation.Set(RedisClient, delayKey, delayValue).Result()
+            if err != nil {
+                fmt.Println("redis set err=", err)
+                return
+            }
+        }
     }
 }
