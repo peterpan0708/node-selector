@@ -3,6 +3,7 @@ package main
 import (
     "bytes"
     "crypto/tls"
+    "encoding/hex"
     "encoding/json"
     "fmt"
     "github.com/asmcos/requests"
@@ -17,45 +18,45 @@ import (
 
 // 本质上是做了一个加权评分系统
 
-func main() {
-    healthCheck := make(chan interface{})
-    go func() {
-        for x := range healthCheck {
-            fmt.Println(x)
-            if x == 1001 {
-                fmt.Println("GetNodeHeight健康")
-            }
-            if x == 1002 {
-                fmt.Println("GetMiningWork健康")
-            }
-            if x == 1003 {
-                fmt.Println("GetUpdatesWithFunc健康")
-            }
-            if x == 0 {
-                fmt.Println("不健康")
-            }
-        }
-    }()
-
-    // 建立1848 updates 长连接
-    GetUpdatesWithFunc("47.101.48.191", HandleConnection, healthCheck)
-    //fmt.Println(g)
-    //fmt.Println(c)
-    //fmt.Println(t)
-
-    // 1848 一次性get work
-    GetMiningWork("47.101.48.191", healthCheck)
-
-    //444 获取高度
-    GetNodeHeight("47.101.48.191", healthCheck)
-    //if err != nil {
-    //    fmt.Println("failed")
-    //} else {
-    //    fmt.Println("高度:", h)
-    //}
-
-    time.Sleep(100 * time.Second)
-}
+//func main() {
+//    healthCheck := make(chan interface{})
+//    go func() {
+//        for x := range healthCheck {
+//            fmt.Println(x)
+//            if x == 1001 {
+//                fmt.Println("GetNodeHeight健康")
+//            }
+//            if x == 1002 {
+//                fmt.Println("GetMiningWork健康")
+//            }
+//            if x == 1003 {
+//                fmt.Println("GetUpdatesWithFunc健康")
+//            }
+//            if x == 0 {
+//                fmt.Println("不健康")
+//            }
+//        }
+//    }()
+//
+//    // 建立1848 updates 长连接
+//    GetUpdatesWithFunc("47.101.48.191", HandleConnection, healthCheck)
+//    //fmt.Println(g)
+//    //fmt.Println(c)
+//    //fmt.Println(t)
+//
+//    // 1848 一次性get work
+//    GetMiningWork("47.101.48.191", healthCheck)
+//
+//    //444 获取高度
+//    GetNodeHeight("47.101.48.191", healthCheck)
+//    //if err != nil {
+//    //    fmt.Println("failed")
+//    //} else {
+//    //    fmt.Println("高度:", h)
+//    //}
+//
+//    time.Sleep(100 * time.Second)
+//}
 
 //// isHeightBlocked 高度是否停滞,如果停滞,healthCheck输出-1,当main里检测到-1之后,健康得分-5
 //func isHeightBlocked(url string, healthCheck chan interface{}) {
@@ -241,7 +242,7 @@ func HandleConnection(conn io.ReadCloser, healthCheck chan interface{}) {
                 fmt.Println("key:", key)
                 fmt.Println("value:", value)
 
-                _, err := redisOperation.SetEX(RedisClient, key, "3600", value).Result()
+                _, err := redisOperation.SetEX(RedisClient, key, 3600, value).Result()
                 if err != nil {
                     fmt.Println("redis set ltc data error=", err.Error())
                 }
@@ -283,4 +284,53 @@ type Data struct {
         Nonce           string `json:"nonce"`
     } `json:"header"`
     Target string `json:"target"`
+}
+
+func main()  {
+    url := "1.1.1.1"
+    //url := "47.101.48.191"
+
+    body := "{\n    \"account\": \"96569b08da3a631b1ca7f2cc768f2f14723510ace3b36b36f3be07f233d65596\",\n    \"predicate\": \"keys-all\",\n    \"public-keys\": [\n        \"96569b08da3a631b1ca7f2cc768f2f14723510ace3b36b36f3be07f233d65596\"\n    ]\n}"
+    strJson := []byte(body)
+    buffJson := bytes.NewBuffer(strJson)
+    request, err := http.NewRequest("GET", "http://"+url+":1848/chainweb/0.0/mainnet01/mining/work?chain=0", buffJson)
+    request.Header.Add("Connection", "keep-alive")
+    request.Header.Add("Content-Type", "application/json;charset=utf-8")
+    request.Header.Add("Transfer-Encoding", "chunked")
+
+    if err != nil {
+        log.Fatal(err)
+    }
+    // 超时时间
+    http_client := &http.Client{Timeout: time.Second}
+    response, err := http_client.Do(request)
+    if err != nil {
+        fmt.Printf("An error occurred in the Node:%s, error is %s \n", url, err)
+        fmt.Println("123")
+        //healthCheck <- 0
+        //log.Fatal(err)
+        //return
+    }else {
+        //defer response.Body.Close()
+
+        buf := make([]byte, 1024)
+        n, err := response.Body.Read(buf)
+        if n == 0 && err != nil {
+            fmt.Printf("An error occurred in the Node:%s, error is %s \n", url, err)
+            //healthCheck <- 0
+            //log.Fatal(err)
+            //return
+        } else {
+            s := hex.EncodeToString(buf[:n])
+            fmt.Println(s)
+            //healthCheck <- 1002
+        }
+        //fmt.Println(string(buf[:n]))
+        //fmt.Println(string(buf))
+        //
+
+        //s := hex.EncodeToString(buf[:n])
+        //fmt.Println(s)
+        //timer.Reset(duration)
+    }
 }

@@ -1,6 +1,7 @@
 package kda
 
 import (
+    "bufio"
     "bytes"
     "context"
     "crypto/tls"
@@ -57,6 +58,9 @@ type Data struct {
 }
 
 func (node *Node) Start(config configs.Node) {
+
+    node.ctx, node.ctxCancel = context.WithCancel(context.Background())
+
     client := redis.NewClient(&redis.Options{
         Addr:     "127.0.0.1:6379",
         Password: "", // no password set
@@ -71,25 +75,47 @@ func (node *Node) Start(config configs.Node) {
         urls = append(urls, url)
     }
 
-    go node.DiagnoseNode("47.101.48.191")
+    // 诊断所有节点的健康性,包括将updates数据写入redis内
+    for _, url := range urls {
+        fmt.Println(url)
+        key := "kda:health:" + url
+        _, err := redisOperation.Set(node.RedisClient, key, "0").Result()
+        if err != nil {
+            fmt.Println("redis set kda health data error=", err.Error())
+            return
+        }
+        healthScores := make(chan int64)
 
-    //// 诊断所有节点的健康性,包括将updates数据写入redis内
+        go node.DiagnoseNode(url, healthScores)
+        go func(url string) {
+            for healthScore := range healthScores {
+                if healthScore < 98 {
+                    fmt.Println(url, "不健康")
+                    _, err := redisOperation.Set(node.RedisClient, key, "0").Result()
+                    if err != nil {
+                        fmt.Println("redis set kda health data error=", err.Error())
+                        return
+                    }
+                } else {
+                    fmt.Println(url, "健康")
+                    _, err := redisOperation.Set(node.RedisClient, key, "1").Result()
+                    if err != nil {
+                        fmt.Println("redis set kda health data error=", err.Error())
+                        return
+                    }
+                }
+            }
+        }(url)
+    }
+
+    //// 统计节点的出块时间,通过updates
     //for _, url := range urls {
-    //    fmt.Println(url)
-    //    go node.DiagnoseNode(url)
+    //   fmt.Println(url)
+    //   go node.calculateDelay(url)
     //}
 
-    //// 统计局域网节点的出块时间,通过updates
-    //for _, lanUrl := range lanUrls {
-    //    fmt.Println(lanUrl)
-    //    go node.getStatistics(lanUrl)
-    //}
-    //
-    //// 统计非局域网节点的出块时间,通过updates
-    //for _, wanUrl := range wanUrls {
-    //    fmt.Println(wanUrl)
-    //    go node.getStatistics(wanUrl)
-    //}
+    node.GetFastestNode(lanUrls, wanUrls)
+
 }
 
 // GetBestNode 获取最优节点
@@ -102,7 +128,7 @@ func (node *Node) GetBestNode() {
 // 包括 444/1848 端口是否畅通
 // 1848高度是否停滞
 // 444推送是否堵塞
-func (node *Node) DiagnoseNode(url string) {
+func (node *Node) DiagnoseNode(url string, healthScore chan int64) {
     var healthList []int64
     healthCheck := make(chan int64)
     go func() {
@@ -123,13 +149,15 @@ func (node *Node) DiagnoseNode(url string) {
             }
 
             if count > 50 {
-                healthScore := 100
+                var healthScoreCal int64
+                healthScoreCal = 100
                 for _, v := range healthList {
                     if v == 0 {
-                        healthScore--
+                        healthScoreCal--
                     }
                 }
-                fmt.Println("健康得分:", healthScore)
+                fmt.Println("健康得分:", healthScoreCal)
+                healthScore <- healthScoreCal
                 count = 0
             }
             if len(healthList) > 100 {
@@ -142,13 +170,25 @@ func (node *Node) DiagnoseNode(url string) {
     }()
 
     // 建立1848 updates 长连接
-    node.GetUpdatesWithFunc(url, node.HandleConnection, healthCheck)
+    ctx, cancel := context.WithCancel(context.Background())
+    node.GetUpdatesWithFunc(url, node.HandleConnection, healthCheck, cancel)
+
+    go func(ctx context.Context) {
+        for {
+            select {
+            case <-ctx.Done():
+                println("need reconnect")
+                ctx, cancel = context.WithCancel(context.Background())
+                node.GetUpdatesWithFunc(url, node.HandleConnection, healthCheck, cancel)
+            }
+        }
+    }(ctx)
 
     // 1848 一次性get work
-    node.GetMiningWork(url, healthCheck)
+    go node.GetMiningWork(url, healthCheck)
 
     //444 获取高度
-    node.GetNodeHeight(url, healthCheck)
+    go node.GetNodeHeight(url, healthCheck)
 
     time.Sleep(1000 * time.Second)
 }
@@ -172,6 +212,7 @@ func (node *Node) GetNodeHeight(url string, healthCheck chan int64) {
                 resp, err := req.Get("https://" + url + ":444/chainweb/0.0/mainnet01/cut")
                 if err != nil {
                     fmt.Printf("failed to get %s block height, err: %v \n", url, err.Error())
+                    healthCheck <- 0
                 } else {
                     err = resp.Json(&res)
                     if err != nil {
@@ -222,24 +263,26 @@ func (node *Node) GetMiningWork(url string, healthCheck chan int64) {
                     healthCheck <- 0
                     //log.Fatal(err)
                     //return
-                }
-                defer response.Body.Close()
+                } else {
+                    //defer response.Body.Close()
 
-                buf := make([]byte, 1024)
-                n, err := response.Body.Read(buf)
-                if n == 0 && err != nil {
-                    fmt.Printf("An error occurred in the Node:%s, error is %s \n", url, err)
-                    healthCheck <- 0
-                    //log.Fatal(err)
-                    //return
-                }
-                //fmt.Println(string(buf[:n]))
-                //fmt.Println(string(buf))
-                //
+                    buf := make([]byte, 1024)
+                    n, err := response.Body.Read(buf)
+                    if n == 0 && err != nil {
+                        fmt.Printf("An error occurred in the Node:%s, error is %s \n", url, err)
+                        healthCheck <- 0
+                        //log.Fatal(err)
+                        //return
+                    } else {
+                        healthCheck <- 1002
+                    }
+                    //fmt.Println(string(buf[:n]))
+                    //fmt.Println(string(buf))
+                    //
 
-                //s := hex.EncodeToString(buf[:n])
-                //fmt.Println(s)
-                healthCheck <- 1002
+                    //s := hex.EncodeToString(buf[:n])
+                    //fmt.Println(s)
+                }
                 timer.Reset(duration)
             }
         }
@@ -247,38 +290,58 @@ func (node *Node) GetMiningWork(url string, healthCheck chan int64) {
 }
 
 // 1848 长连接 存入redis内,如果多久没推,就判定有问题
-func (node *Node) GetUpdatesWithFunc(url string, handleConnection func(conn io.ReadCloser, healthCheck chan int64), healthCheck chan int64) {
-    request, err := http.NewRequest("GET", "http://"+url+":1848/chainweb/0.0/mainnet01/header/updates", nil)
-    request.Header.Add("Connection", "keep-alive")
-    request.Header.Add("Pragma", "no-cache")
-    request.Header.Add("Cache-Control", "no-cache")
-    request.Header.Add("Accept", "text/event-stream")
-    request.Header.Add("Sec-Fetch-Site", "same-site")
-    request.Header.Add("Sec-Fetch-Mode", "cors")
-    request.Header.Add("Sec-Fetch-Dest", "empty")
-    request.Header.Add("Referer", "https://explorer.chainweb.com/mainnet")
-    request.Header.Add("Accept-Language", "zh-CN,zh;q=0.9")
-    request.Header.Add("Transfer-Encoding", "chunked")
+func (node *Node) GetUpdatesWithFunc(url string, handleConnection func(conn io.ReadCloser, healthCheck chan int64, url string, cancel func()), healthCheck chan int64, cancel func()) (conn *http.Response) {
+    for {
+        request, err := http.NewRequest("GET", "http://"+url+":1848/chainweb/0.0/mainnet01/header/updates", nil)
+        request.Header.Add("Connection", "keep-alive")
+        request.Header.Add("Pragma", "no-cache")
+        request.Header.Add("Cache-Control", "no-cache")
+        request.Header.Add("Accept", "text/event-stream")
+        request.Header.Add("Sec-Fetch-Site", "same-site")
+        request.Header.Add("Sec-Fetch-Mode", "cors")
+        request.Header.Add("Sec-Fetch-Dest", "empty")
+        request.Header.Add("Referer", "https://explorer.chainweb.com/mainnet")
+        request.Header.Add("Accept-Language", "zh-CN,zh;q=0.9")
+        request.Header.Add("Transfer-Encoding", "chunked")
 
-    if err != nil {
-        log.Fatal(err)
-    }
+        if err != nil {
+            log.Fatal(err)
+        }
 
-    http_client := &http.Client{}
-    response, err := http_client.Do(request)
-    if err != nil {
-        fmt.Printf("An error occurred in the Node:%s, error is %s \n", url, err)
-        healthCheck <- 0
+        http_client := &http.Client{}
+        response, err := http_client.Do(request)
+        if err != nil {
+            fmt.Printf("An error occurred in the Node:%s, error is %s \n", url, err)
+            healthCheck <- 0
+            time.Sleep(5 * time.Second)
+        } else {
+            go handleConnection(response.Body, healthCheck, url, cancel)
+            return response
+        }
+        //return
     }
-    handleConnection(response.Body, healthCheck)
-    return
 }
 
 // HandleConnection 直接在这里写个定时器,1s出10个就判定出错
-func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64) {
-    go func() {
-        var timeStampList []int64
-        for {
+func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64, url string, cancel func()) {
+    //go func() {
+    reader := bufio.NewReader(conn)
+    var timeStampList []int64
+    for {
+        if _, isPrefix, err := reader.ReadLine(); err != nil {
+            println("failed to read line:", err.Error())
+            err := conn.Close()
+            if err != nil {
+                println(err.Error())
+            }
+            println("success close tcp connection  ", url)
+            //l.ctxCancel()
+            cancel()
+            return
+        } else if isPrefix {
+            println("buffer size small")
+            return
+        } else {
             buf := make([]byte, 4096)
             n, err := conn.Read(buf)
             if n == 0 && err != nil { // simplified
@@ -291,14 +354,14 @@ func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64) {
                 chainId := data.Header.ChainId
                 timestamp := time.Now().Unix()
 
-                key := "kda:" + strconv.FormatInt(height, 10) + ":" + strconv.FormatInt(chainId, 10)
+                key := "kda:" + url + ":" + strconv.FormatInt(height, 10) + ":" + strconv.FormatInt(chainId, 10)
                 value := strconv.FormatInt(timestamp, 10)
                 fmt.Println("key:", key)
                 fmt.Println("value:", value)
 
-                _, err := redisOperation.SetEX(node.RedisClient, key, "3600", value).Result()
+                _, err := redisOperation.SetEX(node.RedisClient, key, 3600, value).Result()
                 if err != nil {
-                    fmt.Println("redis set ltc data error=", err.Error())
+                    fmt.Println("redis set kda data error=", err.Error())
                 }
                 healthCheck <- 1003
                 if len(timeStampList) > 10 {
@@ -310,9 +373,11 @@ func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64) {
             } else {
                 fmt.Printf("An error occurred in the Node:%s, error is %s \n", "111", err)
                 //healthCheck <- 0
+                //healthCheck <- 0
             }
         }
-    }()
+    }
+    //}()
 }
 
 //// isPortAccessible 端口是否通畅
@@ -327,6 +392,17 @@ func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64) {
 //func (n *Node) isP2PPortAccessible(url string) {
 //
 //}
+
+func (node *Node) isHealth(url string) int64 {
+    key := "kda:health:" + url
+    value, err := redisOperation.Get(node.RedisClient, key).Result()
+    if err != nil {
+        fmt.Println("redis set kda data error=", err.Error())
+        return 0
+    }
+    health, err := strconv.ParseInt(value, 10, 0)
+    return health
+}
 
 // isHeightBlocked 高度是否停滞
 func (node *Node) isHeightBlocked() {
@@ -344,10 +420,44 @@ func (node *Node) isCrashed() {
 }
 
 // GetFastestNode 获取最快的节点
-func (node *Node) GetFastestNode() {
+func (node *Node) GetFastestNode(lanUrls []string, wanUrls []string) string {
+    // 各个出块时间相互比较速度,得出最快的节点
+    var healthyLanUrls []string
+    for _, lanUrl := range lanUrls {
+        if node.isHealth(lanUrl) == 1 {
+            healthyLanUrls = append(healthyLanUrls, lanUrl)
+        }
+    }
 
+    var healthyWanUrls []string
+    for _, wanUrl := range wanUrls {
+        if node.isHealth(wanUrl) == 1 {
+            healthyWanUrls = append(healthyWanUrls, wanUrl)
+        }
+    }
+    if len(healthyLanUrls)+len(healthyWanUrls) <= 0 {
+        fmt.Println("全网崩溃")
+        return "全网崩溃"
+    } else if len(healthyLanUrls) == 0 {
+        // 在healthyWanUrls中选择最快的
+        fmt.Println("局域网内所有节点崩溃")
+
+        for healthyWanUrl := range healthyWanUrls {
+            fmt.Println(healthyWanUrl)
+        }
+    } else if len(healthyLanUrls) == 1 {
+        return healthyLanUrls[0]
+    } else if len(healthyLanUrls) > 1 {
+        // 在healthyWanUrls中选择最快的
+        for healthyLanUrl := range healthyLanUrls {
+            fmt.Println(healthyLanUrl)
+        }
+    }
+    return "0"
 }
 
-func (node *Node) getStatistics(url string) {
-
+func (node *Node) calculateDelay(urls []string) {
+    for url := range urls {
+        fmt.Println(url)
+    }
 }
