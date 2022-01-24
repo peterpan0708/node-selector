@@ -183,7 +183,7 @@ func (node *Node) DiagnoseNode(url string, healthScore chan int64, account confi
                 fmt.Println("不健康")
             }
 
-            if count > 50 {
+            if count > (domain/2) {
                 var healthScoreCal int64
                 healthScoreCal = 100
                 for _, v := range healthList {
