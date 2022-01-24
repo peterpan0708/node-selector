@@ -93,7 +93,7 @@ func (node *Node) Start(config configs.Node, chanData chan interface{}) {
         }
         healthScores := make(chan int64)
 
-        go node.DiagnoseNode(url, healthScores, config.Account)
+        go node.DiagnoseNode(url, healthScores, config.Account, config.Domain, config.Timeout)
         go func(url string) {
             for healthScore := range healthScores {
                 if healthScore < 98 {
@@ -163,7 +163,7 @@ func (node *Node) isActivity(url string, urls []string, lanUrls []string, wanUrl
 //  @param url
 //  @param healthScore
 //
-func (node *Node) DiagnoseNode(url string, healthScore chan int64, account configs.Account) {
+func (node *Node) DiagnoseNode(url string, healthScore chan int64, account configs.Account, domain int, timeout int) {
     var healthList []int64
     healthCheck := make(chan int64)
     go func() {
@@ -195,7 +195,7 @@ func (node *Node) DiagnoseNode(url string, healthScore chan int64, account confi
                 healthScore <- healthScoreCal
                 count = 0
             }
-            if len(healthList) > 100 {
+            if len(healthList) > domain {
                 healthList = healthList[1:]
                 //fmt.Println(healthList)
             }
@@ -223,7 +223,7 @@ func (node *Node) DiagnoseNode(url string, healthScore chan int64, account confi
     go node.GetMiningWork(url, healthCheck, account)
 
     //444 获取高度
-    go node.GetNodeHeight(url, healthCheck)
+    go node.GetNodeHeight(url, healthCheck, timeout)
 
     time.Sleep(1000 * time.Second)
 }
@@ -235,7 +235,7 @@ func (node *Node) DiagnoseNode(url string, healthScore chan int64, account confi
 //  @param url
 //  @param healthCheck
 //
-func (node *Node) GetNodeHeight(url string, healthCheck chan int64) {
+func (node *Node) GetNodeHeight(url string, healthCheck chan int64, timeout int) {
     duration := time.Second * 2
     timer := time.NewTimer(duration)
     go func() {
@@ -249,7 +249,7 @@ func (node *Node) GetNodeHeight(url string, healthCheck chan int64) {
                 }
                 req.Client.Transport = tr
                 // 超时时间
-                req.SetTimeout(1)
+                req.SetTimeout(1 * time.Second)
 
                 resp, err := req.Get("https://" + url + ":444/chainweb/0.0/mainnet01/cut")
                 if err != nil {
@@ -304,7 +304,7 @@ func (node *Node) GetMiningWork(url string, healthCheck chan int64, account conf
                     log.Fatal(err)
                 }
                 // 超时时间
-                http_client := &http.Client{Timeout: time.Second}
+                http_client := &http.Client{Timeout: 1 * time.Second}
                 response, err := http_client.Do(request)
                 if err != nil {
                     fmt.Printf("An error occurred in the Node:%s, error is %s \n", url, err)
