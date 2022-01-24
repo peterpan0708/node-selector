@@ -401,4 +401,5 @@ func main() {
             }
         }
     }
+    fmt.Println("finished")
 }

@@ -17,11 +17,13 @@ func main() {
         fmt.Println("read config err=", err)
         return
     }
-    go a.CreateServer(cfg.Api)
+    chanData := make(chan interface{})
+    go a.CreateShortServer(cfg.Api)
+    go a.CreatePersistentServer(cfg.Api, chanData)
     for _, c := range cfg.Nodes {
         if c.Name == "kda" {
             var k kda.Node
-            go k.Start(c)
+            go k.Start(c, chanData)
         }
     }
     system.Quit()

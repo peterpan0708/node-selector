@@ -58,7 +58,7 @@ type Data struct {
     Target string `json:"target"`
 }
 
-func (node *Node) Start(config configs.Node) {
+func (node *Node) Start(config configs.Node, chanData chan interface{}) {
 
     node.ctx, node.ctxCancel = context.WithCancel(context.Background())
 
@@ -97,6 +97,8 @@ func (node *Node) Start(config configs.Node) {
                         fmt.Println("redis set kda health data error=", err.Error())
                         return
                     }
+                    // 判断该url是否正在使用
+                    node.isActivity(url, urls, lanUrls, wanUrls, chanData)
                 } else {
                     fmt.Println(url, "健康")
                     _, err := redisOperation.Set(node.RedisClient, key, "1").Result()
@@ -115,14 +117,34 @@ func (node *Node) Start(config configs.Node) {
     //   go node.calculateDelay(url)
     //}
 
-    node.GetFastestNode(lanUrls, wanUrls)
+    // 定时任务 计算延迟
+    go node.calculateDelay(urls, lanUrls, wanUrls)
 
+    //// 定时任务 计算最快的节点
+    //go node.GetFastestNode(lanUrls, wanUrls)
 }
 
 // GetBestNode 获取最优节点
 //  具体流程包括，先获取全网流程是否崩溃,再看主节点是否健康,
-func (node *Node) GetBestNode() {
+func (node *Node) GetBestNode() string {
+    fastestNode, err := redisOperation.Get(node.RedisClient, "kda:fastestNode").Result()
+    if err != nil {
+        fmt.Println("redis get err=", err)
+        return fastestNode
+    }else {
+        return ""
+    }
+}
 
+func (node *Node) isActivity(url string, urls []string, lanUrls []string, wanUrls []string, chanData chan interface{}) {
+    fastestNode := node.GetBestNode()
+    if url == fastestNode {
+        node.calculateDelay(urls, lanUrls, wanUrls)
+        newFastestNode := node.GetBestNode()
+        chanData <- newFastestNode
+    }else {
+        return
+    }
 }
 
 // DiagnoseNode 诊断节点的健康性,存入redis中
@@ -135,7 +157,7 @@ func (node *Node) DiagnoseNode(url string, healthScore chan int64) {
     go func() {
         count := 0
         for x := range healthCheck {
-            fmt.Println(x)
+            //fmt.Println(x)
             if x == 1001 {
                 //fmt.Println("GetNodeHeight健康")
             }
@@ -357,8 +379,8 @@ func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64, u
 
                 key := "kda:" + url + ":" + strconv.FormatInt(height, 10) + ":" + strconv.FormatInt(chainId, 10)
                 value := strconv.FormatInt(timestamp, 10)
-                fmt.Println("key:", key)
-                fmt.Println("value:", value)
+                //fmt.Println("key:", key)
+                //fmt.Println("value:", value)
 
                 _, err := redisOperation.SetEX(node.RedisClient, key, 3600, value).Result()
                 if err != nil {
@@ -378,7 +400,7 @@ func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64, u
                 timeStampList = append(timeStampList, timestamp)
 
             } else {
-                fmt.Printf("An error occurred in the Node:%s, error is %s \n", "111", err)
+                fmt.Printf("An error occurred in the Node:%s, error is %s \n", url, err)
                 //healthCheck <- 0
             }
         }
@@ -410,24 +432,26 @@ func (node *Node) isHealth(url string) int64 {
     return health
 }
 
-// isHeightBlocked 高度是否停滞
-func (node *Node) isHeightBlocked() {
-
-}
-
-// isLongConnectionBlock 推送是否堵塞
-func (node *Node) isLongConnectionBlock() {
-
-}
-
-// isCrashed 全网是否崩溃
-func (node *Node) isCrashed() {
-
-}
+//// isHeightBlocked 高度是否停滞
+//func (node *Node) isHeightBlocked() {
+//
+//}
+//
+//// isLongConnectionBlock 推送是否堵塞
+//func (node *Node) isLongConnectionBlock() {
+//
+//}
+//
+//// isCrashed 全网是否崩溃
+//func (node *Node) isCrashed() {
+//
+//}
 
 // GetFastestNode 获取最快的节点
-func (node *Node) GetFastestNode(lanUrls []string, wanUrls []string) string {
+func (node *Node) GetAndSetFastestNode(lanUrls []string, wanUrls []string) {
+
     // 各个出块时间相互比较速度,得出最快的节点
+    // 计算出health列表
     var healthyLanUrls []string
     for _, lanUrl := range lanUrls {
         if node.isHealth(lanUrl) == 1 {
@@ -441,37 +465,114 @@ func (node *Node) GetFastestNode(lanUrls []string, wanUrls []string) string {
             healthyWanUrls = append(healthyWanUrls, wanUrl)
         }
     }
+
     if len(healthyLanUrls)+len(healthyWanUrls) <= 0 {
         fmt.Println("全网崩溃")
-        return "全网崩溃"
+        _, err := redisOperation.Set(node.RedisClient, "kda:fastestNode", "null").Result()
+        if err != nil {
+            fmt.Println("redis set err=", err)
+            return
+        }
     } else if len(healthyLanUrls) == 0 {
         // 在healthyWanUrls中选择最快的
         fmt.Println("局域网内所有节点崩溃")
 
+        delayMin := 100.0
+        urlMin := ""
         for _, healthyWanUrl := range healthyWanUrls {
-            fmt.Println(healthyWanUrl)
+            key := "kda:delay:" + healthyWanUrl
+            delayString, err := redisOperation.Get(node.RedisClient, key).Result()
+            if err != nil {
+                fmt.Println("redis get err=", err)
+                break
+            }
+            delay, err := strconv.ParseFloat(delayString, 64)
+            if delay < delayMin {
+                delayMin = delay
+            }
+            urlMin = healthyWanUrl
+        }
+        if urlMin == "" {
+            fmt.Println("GetFastestNode err: cannot get fastest node from wan urls when lan urls are all broken")
+        } else {
+            _, err := redisOperation.Set(node.RedisClient, "kda:fastestNode", urlMin).Result()
+            if err != nil {
+                fmt.Println("redis set err=", err)
+            }
         }
     } else if len(healthyLanUrls) == 1 {
-        return healthyLanUrls[0]
+        _, err := redisOperation.Set(node.RedisClient, "kda:fastestNode", healthyLanUrls[0]).Result()
+        if err != nil {
+            fmt.Println("redis set err=", err)
+        }
     } else if len(healthyLanUrls) > 1 {
         // 在healthyWanUrls中选择最快的
+
+        delayMin := 100.0
+        urlMin := ""
         for _, healthyLanUrl := range healthyLanUrls {
-            fmt.Println(healthyLanUrl)
+            key := "kda:delay:" + healthyLanUrl
+            delayString, err := redisOperation.Get(node.RedisClient, key).Result()
+            if err != nil {
+                fmt.Println("redis get err=", err)
+                break
+            }
+            delay, err := strconv.ParseFloat(delayString, 64)
+            if delay < delayMin {
+                delayMin = delay
+            }
+            urlMin = healthyLanUrl
+        }
+        if urlMin == "" {
+            fmt.Println("GetFastestNode err: cannot get fastest node from wan urls when lan urls are all broken")
+        } else {
+            _, err := redisOperation.Set(node.RedisClient, "kda:fastestNode", urlMin).Result()
+            if err != nil {
+                fmt.Println("redis set err=", err)
+            }
+        }
+    } else {
+        _, err := redisOperation.Set(node.RedisClient, "kda:fastestNode", "null").Result()
+        if err != nil {
+            fmt.Println("redis set err=", err)
         }
     }
-    return "0"
+
 }
 
 // 通过redis里存储的各个url的出块时间,随便选一个url作为参照物,计算出每个url的delay,存入redis中
-func (node *Node) calculateDelay(urls []string) {
-    // 随机选一个作为参照物
-    referenceUrl := urls[0]
-    // 将其他与参照物作对比
+func (node *Node) calculateDelayCycle(urls []string, lanUrls []string, wanUrls []string) {
+    duration := time.Second * 300
+    timer := time.NewTimer(duration)
+
+    go func() {
+        for {
+            select {
+            case <-timer.C:
+                node.calculateDelay(urls, lanUrls, wanUrls)
+                timer.Reset(duration)
+            }
+        }
+    }()
+}
+
+func (node *Node) calculateDelay(urls []string, lanUrls []string, wanUrls []string) {
+    // 读取所有健康的url
+    var healthyUrls []string
     for _, url := range urls {
+        if node.isHealth(url) == 1 {
+            healthyUrls = append(healthyUrls, url)
+        }
+    }
+
+    // 随机选一个作为参照物
+    referenceUrl := healthyUrls[0]
+    // 将其他与参照物作对比
+    for _, healthyUrl := range healthyUrls {
         var delays []int64
 
         // 取出该url的所有
-        s := "kda:" + url + ":"
+        s := "kda:" + healthyUrl + ":"
         keys, err := redisOperation.Keys(node.RedisClient, s).Result()
         if err != nil {
             fmt.Println("redis keys err=", err)
@@ -485,8 +586,8 @@ func (node *Node) calculateDelay(urls []string) {
             }
 
             // 寻找参照url的timestamp,如果找不到,就
-            referenceKey := strings.Replace(key, url, referenceUrl, 1)
-            fmt.Println(referenceKey)
+            referenceKey := strings.Replace(key, healthyUrl, referenceUrl, 1)
+            //fmt.Println(referenceKey)
             referenceTimeStampString, err := redisOperation.Get(node.RedisClient, referenceKey).Result()
             if err != nil {
                 fmt.Println("redis get err=", err)
@@ -505,7 +606,7 @@ func (node *Node) calculateDelay(urls []string) {
             }
             delay := float64(delaySum) / float64(len(delays))
 
-            delayKey := "kda:delay:" + url
+            delayKey := "kda:delay:" + healthyUrl
             delayValue := strconv.FormatFloat(delay, 'f', 4, 64)
 
             _, err = redisOperation.Set(node.RedisClient, delayKey, delayValue).Result()
@@ -515,4 +616,6 @@ func (node *Node) calculateDelay(urls []string) {
             }
         }
     }
+    fmt.Println("calculateDelay finished")
+    node.GetAndSetFastestNode(lanUrls, wanUrls)
 }
