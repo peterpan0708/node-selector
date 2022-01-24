@@ -1,7 +1,8 @@
 {
   "api": {
     "host": "127.0.0.1",
-    "port": 9826
+    "short_port": "9826",
+    "persistent_port": "9827"
   },
   "nodes": [
     {
@@ -9,6 +10,10 @@
       "domain": 100,
       "retry": 3,
       "timeout": 5,
+      "account": {
+        "account": "111",
+        "public-keys": "111"
+      },
       "urls": {
         "lan": [
           "1.1.1.1",
@@ -16,7 +21,8 @@
         ],
         "wan": [
           "1.1.1.1",
-          "2.2.2.2"
+          "2.2.2.2",
+          "3.3.3.3"
         ]
       }
     }

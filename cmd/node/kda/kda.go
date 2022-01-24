@@ -58,8 +58,14 @@ type Data struct {
     Target string `json:"target"`
 }
 
+//
+// Start
+//  @Description: 开启统计模块
+//  @receiver node
+//  @param config
+//  @param chanData
+//
 func (node *Node) Start(config configs.Node, chanData chan interface{}) {
-
     node.ctx, node.ctxCancel = context.WithCancel(context.Background())
 
     client := redis.NewClient(&redis.Options{
@@ -87,7 +93,7 @@ func (node *Node) Start(config configs.Node, chanData chan interface{}) {
         }
         healthScores := make(chan int64)
 
-        go node.DiagnoseNode(url, healthScores)
+        go node.DiagnoseNode(url, healthScores, config.Account)
         go func(url string) {
             for healthScore := range healthScores {
                 if healthScore < 98 {
@@ -111,47 +117,53 @@ func (node *Node) Start(config configs.Node, chanData chan interface{}) {
         }(url)
     }
 
-    //// 统计节点的出块时间,通过updates
-    //for _, url := range urls {
-    //   fmt.Println(url)
-    //   go node.calculateDelay(url)
-    //}
-
     // 定时任务 计算延迟
     go node.calculateDelay(urls, lanUrls, wanUrls)
-
-    //// 定时任务 计算最快的节点
-    //go node.GetFastestNode(lanUrls, wanUrls)
 }
 
-// GetBestNode 获取最优节点
-//  具体流程包括，先获取全网流程是否崩溃,再看主节点是否健康,
+//
+// GetBestNode
+//  @Description: 获取最优节点,具体流程包括，先获取全网流程是否崩溃,再看主节点是否健康.
+//  @receiver node
+//  @return string
+//
 func (node *Node) GetBestNode() string {
     fastestNode, err := redisOperation.Get(node.RedisClient, "kda:fastestNode").Result()
     if err != nil {
         fmt.Println("redis get err=", err)
         return fastestNode
-    }else {
+    } else {
         return ""
     }
 }
 
+//
+// isActivity
+//  @Description: 判断该节点是否可用,如果不可用,则推送一个新的给长连接
+//  @receiver node
+//  @param url
+//  @param urls
+//  @param lanUrls
+//  @param wanUrls
+//  @param chanData
+//
 func (node *Node) isActivity(url string, urls []string, lanUrls []string, wanUrls []string, chanData chan interface{}) {
     fastestNode := node.GetBestNode()
     if url == fastestNode {
         node.calculateDelay(urls, lanUrls, wanUrls)
         newFastestNode := node.GetBestNode()
         chanData <- newFastestNode
-    }else {
-        return
     }
+    return
 }
 
-// DiagnoseNode 诊断节点的健康性,存入redis中
-// 包括 444/1848 端口是否畅通
-// 1848高度是否停滞
-// 444推送是否堵塞
-func (node *Node) DiagnoseNode(url string, healthScore chan int64) {
+// DiagnoseNode
+//  @Description: 诊断节点的健康性,存入redis中,包括 444/1848 端口是否畅通,1848高度是否停滞,444推送是否堵塞
+//  @receiver node
+//  @param url
+//  @param healthScore
+//
+func (node *Node) DiagnoseNode(url string, healthScore chan int64, account configs.Account) {
     var healthList []int64
     healthCheck := make(chan int64)
     go func() {
@@ -208,7 +220,7 @@ func (node *Node) DiagnoseNode(url string, healthScore chan int64) {
     }(ctx)
 
     // 1848 一次性get work
-    go node.GetMiningWork(url, healthCheck)
+    go node.GetMiningWork(url, healthCheck, account)
 
     //444 获取高度
     go node.GetNodeHeight(url, healthCheck)
@@ -216,8 +228,15 @@ func (node *Node) DiagnoseNode(url string, healthScore chan int64) {
     time.Sleep(1000 * time.Second)
 }
 
+//
+// GetNodeHeight
+//  @Description: 通过444端口获取节点高度
+//  @receiver node
+//  @param url
+//  @param healthCheck
+//
 func (node *Node) GetNodeHeight(url string, healthCheck chan int64) {
-    duration := time.Second * 1
+    duration := time.Second * 2
     timer := time.NewTimer(duration)
     go func() {
         for {
@@ -257,9 +276,15 @@ func (node *Node) GetNodeHeight(url string, healthCheck chan int64) {
     }()
 }
 
-// 1848 一次性
-func (node *Node) GetMiningWork(url string, healthCheck chan int64) {
-    duration := time.Second * 1
+//
+// GetMiningWork
+//  @Description: 通过1848端口获取mining work
+//  @receiver node
+//  @param url
+//  @param healthCheck
+//
+func (node *Node) GetMiningWork(url string, healthCheck chan int64, account configs.Account) {
+    duration := time.Second * 2
     timer := time.NewTimer(duration)
 
     go func() {
@@ -267,7 +292,7 @@ func (node *Node) GetMiningWork(url string, healthCheck chan int64) {
             select {
             case <-timer.C:
 
-                body := "{\n    \"account\": \"96569b08da3a631b1ca7f2cc768f2f14723510ace3b36b36f3be07f233d65596\",\n    \"predicate\": \"keys-all\",\n    \"public-keys\": [\n        \"96569b08da3a631b1ca7f2cc768f2f14723510ace3b36b36f3be07f233d65596\"\n    ]\n}"
+                body := "{\n    \"account\": \"" + account.Account + "\",\n    \"predicate\": \"keys-all\",\n    \"public-keys\": [\n        \"" + account.PublicKeys + "\"\n    ]\n}"
                 strJson := []byte(body)
                 buffJson := bytes.NewBuffer(strJson)
                 request, err := http.NewRequest("GET", "http://"+url+":1848/chainweb/0.0/mainnet01/mining/work?chain=0", buffJson)
@@ -312,7 +337,16 @@ func (node *Node) GetMiningWork(url string, healthCheck chan int64) {
     }()
 }
 
-// 1848 长连接 存入redis内,如果多久没推,就判定有问题
+//
+// GetUpdatesWithFunc
+//  @Description: 建立1848长连接,存入redis内,如果多久没推,就判定有问题
+//  @receiver node
+//  @param url
+//  @param handleConnection
+//  @param healthCheck
+//  @param cancel
+//  @return conn
+//
 func (node *Node) GetUpdatesWithFunc(url string, handleConnection func(conn io.ReadCloser, healthCheck chan int64, url string, cancel func()), healthCheck chan int64, cancel func()) (conn *http.Response) {
     for {
         request, err := http.NewRequest("GET", "http://"+url+":1848/chainweb/0.0/mainnet01/header/updates", nil)
@@ -345,7 +379,15 @@ func (node *Node) GetUpdatesWithFunc(url string, handleConnection func(conn io.R
     }
 }
 
-// HandleConnection 直接在这里写个定时器,1s出10个就判定出错
+//
+// HandleConnection
+//  @Description: 1848长连接的处理,直接在这里写个定时器,1s出10个就判定出错
+//  @receiver node
+//  @param conn
+//  @param healthCheck
+//  @param url
+//  @param cancel
+//
 func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64, url string, cancel func()) {
     //go func() {
     reader := bufio.NewReader(conn)
@@ -421,6 +463,13 @@ func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64, u
 //
 //}
 
+//
+// isHealth
+//  @Description: 判断当前url是否健康
+//  @receiver node
+//  @param url
+//  @return int64
+//
 func (node *Node) isHealth(url string) int64 {
     key := "kda:health:" + url
     value, err := redisOperation.Get(node.RedisClient, key).Result()
@@ -447,7 +496,13 @@ func (node *Node) isHealth(url string) int64 {
 //
 //}
 
-// GetFastestNode 获取最快的节点
+//
+// GetAndSetFastestNode
+//  @Description: 获取当前最快的节点
+//  @receiver node
+//  @param lanUrls
+//  @param wanUrls
+//
 func (node *Node) GetAndSetFastestNode(lanUrls []string, wanUrls []string) {
 
     // 各个出块时间相互比较速度,得出最快的节点
@@ -540,7 +595,14 @@ func (node *Node) GetAndSetFastestNode(lanUrls []string, wanUrls []string) {
 
 }
 
-// 通过redis里存储的各个url的出块时间,随便选一个url作为参照物,计算出每个url的delay,存入redis中
+//
+// calculateDelayCycle
+//  @Description: 周期性执行calculateDelay()
+//  @receiver node
+//  @param urls
+//  @param lanUrls
+//  @param wanUrls
+//
 func (node *Node) calculateDelayCycle(urls []string, lanUrls []string, wanUrls []string) {
     duration := time.Second * 300
     timer := time.NewTimer(duration)
@@ -549,20 +611,34 @@ func (node *Node) calculateDelayCycle(urls []string, lanUrls []string, wanUrls [
         for {
             select {
             case <-timer.C:
-                node.calculateDelay(urls, lanUrls, wanUrls)
+                err := node.calculateDelay(urls, lanUrls, wanUrls)
+                if err != nil {
+                    break
+                }
                 timer.Reset(duration)
             }
         }
     }()
 }
 
-func (node *Node) calculateDelay(urls []string, lanUrls []string, wanUrls []string) {
+//
+// calculateDelay
+//  @Description: 通过redis里存储的各个url的出块时间,随便选一个url作为参照物,计算出每个url的delay,存入redis中
+//  @receiver node
+//  @param urls
+//  @param lanUrls
+//  @param wanUrls
+//
+func (node *Node) calculateDelay(urls []string, lanUrls []string, wanUrls []string) error {
     // 读取所有健康的url
     var healthyUrls []string
     for _, url := range urls {
         if node.isHealth(url) == 1 {
             healthyUrls = append(healthyUrls, url)
         }
+    }
+    if len(healthyUrls) == 0 {
+        return nil
     }
 
     // 随机选一个作为参照物
@@ -576,13 +652,13 @@ func (node *Node) calculateDelay(urls []string, lanUrls []string, wanUrls []stri
         keys, err := redisOperation.Keys(node.RedisClient, s).Result()
         if err != nil {
             fmt.Println("redis keys err=", err)
-            return
+            return err
         }
         for _, key := range keys {
             timeStampString, err := redisOperation.Get(node.RedisClient, key).Result()
             if err != nil {
                 fmt.Println("redis get err=", err)
-                return
+                return err
             }
 
             // 寻找参照url的timestamp,如果找不到,就
@@ -612,10 +688,12 @@ func (node *Node) calculateDelay(urls []string, lanUrls []string, wanUrls []stri
             _, err = redisOperation.Set(node.RedisClient, delayKey, delayValue).Result()
             if err != nil {
                 fmt.Println("redis set err=", err)
-                return
+                return err
             }
         }
     }
     fmt.Println("calculateDelay finished")
     node.GetAndSetFastestNode(lanUrls, wanUrls)
+
+    return nil
 }

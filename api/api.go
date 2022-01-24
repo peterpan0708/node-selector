@@ -14,6 +14,12 @@ type Api struct {
     RedisClient *redis.Client
 }
 
+//
+// CreateShortServer
+//  @Description: 开启短连接http服务端
+//  @receiver a
+//  @param cfg
+//
 func (a *Api) CreateShortServer(cfg configs.Api) {
     client := redis.NewClient(&redis.Options{
         Addr:     "127.0.0.1:6379",
@@ -26,9 +32,16 @@ func (a *Api) CreateShortServer(cfg configs.Api) {
         return context.String(http.StatusOK, "node-selector (* ￣︿￣)")
     })
     e.GET("/node/:coin", a.getNode)
-    e.Logger.Fatal(e.Start(":9826"))
+    e.Logger.Fatal(e.Start(":" + cfg.ShortPort))
 }
 
+//
+// CreatePersistentServer
+//  @Description: 开启长连接http服务端
+//  @receiver a
+//  @param api
+//  @param chanData
+//
 func (a *Api) CreatePersistentServer(api configs.Api, chanData chan interface{}) {
     client := redis.NewClient(&redis.Options{
         Addr:     "127.0.0.1:6379",
@@ -37,7 +50,7 @@ func (a *Api) CreatePersistentServer(api configs.Api, chanData chan interface{})
     })
     a.RedisClient = client
 
-    url := api.Host + ":" + string(rune(api.Port))
+    url := api.Host + ":" + api.PersistentPort
     netListen, err := net.Listen("tcp", url)
     if err != nil {
         fmt.Println("create server err=", err)
@@ -61,6 +74,13 @@ func (a *Api) CreatePersistentServer(api configs.Api, chanData chan interface{})
     }
 }
 
+//
+// getNode
+//  @Description: 用以定时获取最优节点
+//  @receiver a
+//  @param c
+//  @return error
+//
 func (a *Api) getNode(c echo.Context) error {
     coin := c.Param("coin")
 
@@ -73,6 +93,13 @@ func (a *Api) getNode(c echo.Context) error {
     return c.String(http.StatusOK, node)
 }
 
+//
+// HandleConnection
+//  @Description: 如果正在使用的节点不健康,则汇报
+//  @receiver a
+//  @param conn
+//  @param chanData
+//
 func (a *Api) HandleConnection(conn net.Conn, chanData chan interface{}) {
     buffer := make([]byte, 2048) //建立一个slice
     for {
