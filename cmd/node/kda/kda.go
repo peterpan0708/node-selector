@@ -183,7 +183,7 @@ func (node *Node) DiagnoseNode(url string, healthScore chan int64, account confi
                 fmt.Println("不健康")
             }
 
-            if count > (domain/2) {
+            if count > (domain / 2) {
                 var healthScoreCal int64
                 healthScoreCal = 100
                 for _, v := range healthList {
@@ -307,6 +307,7 @@ func (node *Node) GetMiningWork(url string, healthCheck chan int64, account conf
                 http_client := &http.Client{Timeout: 1 * time.Second}
                 response, err := http_client.Do(request)
                 if err != nil {
+                    println("11111111")
                     fmt.Printf("An error occurred in the Node:%s, error is %s \n", url, err)
                     healthCheck <- 0
                     //log.Fatal(err)
@@ -317,6 +318,7 @@ func (node *Node) GetMiningWork(url string, healthCheck chan int64, account conf
                     buf := make([]byte, 1024)
                     n, err := response.Body.Read(buf)
                     if n == 0 && err != nil {
+                        println("2222222")
                         fmt.Printf("An error occurred in the Node:%s, error is %s \n", url, err)
                         healthCheck <- 0
                         //log.Fatal(err)
@@ -368,6 +370,7 @@ func (node *Node) GetUpdatesWithFunc(url string, handleConnection func(conn io.R
         http_client := &http.Client{}
         response, err := http_client.Do(request)
         if err != nil {
+            println("3333333")
             fmt.Printf("An error occurred in the Node:%s, error is %s \n", url, err)
             healthCheck <- 0
             time.Sleep(5 * time.Second)
@@ -407,43 +410,82 @@ func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64, u
             println("buffer size small")
             return
         } else {
-            buf := make([]byte, 4096)
+            buf := make([]byte, 16384)
             n, err := conn.Read(buf)
             if n == 0 && err != nil { // simplified
                 break
             }
-
-            var data Data
-            if err = json.Unmarshal(buf[23:n], &data); err == nil {
-                height := data.Header.Height
-                chainId := data.Header.ChainId
-                timestamp := time.Now().Unix()
-
-                key := "kda:" + url + ":" + strconv.FormatInt(height, 10) + ":" + strconv.FormatInt(chainId, 10)
-                value := strconv.FormatInt(timestamp, 10)
-                //fmt.Println("key:", key)
-                //fmt.Println("value:", value)
-
-                _, err := redisOperation.SetEX(node.RedisClient, key, 3600, value).Result()
-                if err != nil {
-                    fmt.Println("redis set kda data error=", err.Error())
+            bufString := string(buf)
+            bufArr := strings.Split(bufString, "event:BlockHeader")
+            for _, v := range bufArr {
+                println("----")
+                println(v)
+            }
+            println("len is :", len(bufArr))
+            var start int
+            var end int
+            for i := 1; i < len(bufArr); i++ {
+                realBuffArr := strings.Split(bufArr[i], "data:")
+                if len(realBuffArr) != 2 {
+                    println("invalid buf string: ", bufString)
+                    break
                 }
-                healthCheck <- 1003
-                if len(timeStampList) > 9 {
-                    // 如果1s内出了超过10个块,则判定不健康
-                    if timeStampList[len(timeStampList)-1]-timeStampList[0] < 2 {
-                        healthCheck <- 0
-                        healthCheck <- 0
-                        healthCheck <- 0
+                realBuf := []byte(realBuffArr[1])
+                println(len(realBuf))
+                println(n)
+
+                if len(bufArr) > 2 {
+                    if i == len(bufArr) - 1 {
+                        start = end + 23
+                        end = n
+                    } else if i == 1 {
+                        start = 23
+                        end = 23 + len(realBuf)
+                    } else {
+                        start = end + 23
+                        end = start + len(realBuf)
                     }
-                    timeStampList = timeStampList[1:]
-                    //fmt.Println(healthList)
+                } else {
+                    start = 23
+                    end = n
                 }
-                timeStampList = append(timeStampList, timestamp)
 
-            } else {
-                fmt.Printf("An error occurred in the Node:%s, error is %s \n", url, err)
-                //healthCheck <- 0
+                var data Data
+                if err = json.Unmarshal(buf[start:end], &data); err == nil {
+                    println("success read")
+                    height := data.Header.Height
+                    chainId := data.Header.ChainId
+                    timestamp := time.Now().Unix()
+
+                    key := "kda:" + url + ":" + strconv.FormatInt(height, 10) + ":" + strconv.FormatInt(chainId, 10)
+                    value := strconv.FormatInt(timestamp, 10)
+                    //fmt.Println("key:", key)
+                    //fmt.Println("value:", value)
+
+                    _, err := redisOperation.SetEX(node.RedisClient, key, 3600, value).Result()
+                    if err != nil {
+                        fmt.Println("redis set kda data error=", err.Error())
+                    }
+                    healthCheck <- 1003
+                    if len(timeStampList) > 9 {
+                        // 如果1s内出了超过10个块,则判定不健康
+                        if timeStampList[len(timeStampList)-1]-timeStampList[0] < 2 {
+                            healthCheck <- 0
+                            healthCheck <- 0
+                            healthCheck <- 0
+                        }
+                        timeStampList = timeStampList[1:]
+                        //fmt.Println(healthList)
+                    }
+                    timeStampList = append(timeStampList, timestamp)
+
+                } else {
+                    println(len(buf))
+                    println(string(bufArr[1]))
+                    println("4444444")
+                    fmt.Printf("An error occurred in the Node:%s, error is %s \n", url, err)
+                    //healthCheck <- 0
+                }
             }
         }
     }

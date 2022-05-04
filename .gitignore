@@ -1,3 +1,4 @@
 vendor/
 configs/config.json
 .idea/
+nohup.out
