@@ -69,7 +69,7 @@ func (a *Api) CreatePersistentServer(api configs.Api, chanData chan interface{})
         fmt.Println("tcp connect success")
 
         // 模拟汇报挖空块
-        a.HandleConnection(conn, chanData)
+        go a.HandleConnection(conn, chanData)
 
     }
 }
