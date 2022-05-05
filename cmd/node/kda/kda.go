@@ -166,6 +166,11 @@ func (node *Node) isActivity(url string, urls []string, lanUrls []string, wanUrl
 func (node *Node) DiagnoseNode(url string, healthScore chan int64, account configs.Account, domain int, timeout int) {
     var healthList []int64
     healthCheck := make(chan int64)
+    // 1848 一次性get work
+    go node.GetMiningWork(url, healthCheck, account)
+
+    //444 获取高度
+    go node.GetNodeHeight(url, healthCheck, timeout)
     go func() {
         count := 0
         for x := range healthCheck {
@@ -219,11 +224,6 @@ func (node *Node) DiagnoseNode(url string, healthScore chan int64, account confi
         }
     }(ctx)
 
-    // 1848 一次性get work
-    go node.GetMiningWork(url, healthCheck, account)
-
-    //444 获取高度
-    go node.GetNodeHeight(url, healthCheck, timeout)
 
     time.Sleep(1000 * time.Second)
 }
@@ -304,7 +304,7 @@ func (node *Node) GetMiningWork(url string, healthCheck chan int64, account conf
                     log.Fatal(err)
                 }
                 // 超时时间
-                http_client := &http.Client{Timeout: 1 * time.Second}
+                http_client := &http.Client{Timeout: 3 * time.Second}
                 response, err := http_client.Do(request)
                 if err != nil {
                     println("11111111")
@@ -351,6 +351,7 @@ func (node *Node) GetMiningWork(url string, healthCheck chan int64, account conf
 //
 func (node *Node) GetUpdatesWithFunc(url string, handleConnection func(conn io.ReadCloser, healthCheck chan int64, url string, cancel func()), healthCheck chan int64, cancel func()) (conn *http.Response) {
     for {
+        println("=======")
         request, err := http.NewRequest("GET", "http://"+url+":1848/chainweb/0.0/mainnet01/header/updates", nil)
         request.Header.Add("Connection", "keep-alive")
         request.Header.Add("Pragma", "no-cache")
@@ -375,7 +376,7 @@ func (node *Node) GetUpdatesWithFunc(url string, handleConnection func(conn io.R
             healthCheck <- 0
             time.Sleep(5 * time.Second)
         } else {
-            go handleConnection(response.Body, healthCheck, url, cancel)
+            handleConnection(response.Body, healthCheck, url, cancel)
             return response
         }
         //return
@@ -408,19 +409,18 @@ func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64, u
             return
         } else if isPrefix {
             println("buffer size small")
+            conn.Close()
             return
         } else {
             buf := make([]byte, 16384)
             n, err := conn.Read(buf)
             if n == 0 && err != nil { // simplified
+                conn.Close()
                 break
             }
             bufString := string(buf)
             bufArr := strings.Split(bufString, "event:BlockHeader")
-            for _, v := range bufArr {
-                println("----")
-                println(v)
-            }
+
             println("len is :", len(bufArr))
             var start int
             var end int
@@ -431,8 +431,6 @@ func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64, u
                     break
                 }
                 realBuf := []byte(realBuffArr[1])
-                println(len(realBuf))
-                println(n)
 
                 if len(bufArr) > 2 {
                     if i == len(bufArr) - 1 {
