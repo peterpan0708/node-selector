@@ -416,53 +416,53 @@ func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64, u
             //println(string(line))
             arr := strings.Split(line, "data:")
             var data Data
-            err = json.Unmarshal([]byte(arr[1]), &data)
-            if err != nil {
-                println(err.Error())
-                continue
-            }
-            println(data.Header.Height, "  ", data.Header.ChainId)
-            continue
-            buf := make([]byte, 16384)
-            n, err := conn.Read(buf)
-            if n == 0 && err != nil { // simplified
-                println("-------")
-                println(err.Error())
-                conn.Close()
-                break
-            }
-            bufString := string(buf)
-            bufArr := strings.Split(bufString, "event:BlockHeader")
-
-            println("len is :", len(bufArr))
-            var start int
-            var end int
-            for i := 1; i < len(bufArr); i++ {
-                realBuffArr := strings.Split(bufArr[i], "data:")
-                if len(realBuffArr) != 2 {
-                    println("invalid buf string: ", bufString)
-                    break
-                }
-                realBuf := []byte(realBuffArr[1])
-
-                if len(bufArr) > 2 {
-                    if i == len(bufArr) - 1 {
-                        start = end + 23
-                        end = n
-                    } else if i == 1 {
-                        start = 23
-                        end = 23 + len(realBuf)
-                    } else {
-                        start = end + 23
-                        end = start + len(realBuf)
-                    }
-                } else {
-                    start = 23
-                    end = n
-                }
-
-                var data Data
-                if err = json.Unmarshal(buf[start:end], &data); err == nil {
+            //err = json.Unmarshal([]byte(arr[1]), &data)
+            //if err != nil {
+            //    println(err.Error())
+            //    continue
+            //}
+            //println(data.Header.Height, "  ", data.Header.ChainId)
+            //continue
+            //buf := make([]byte, 16384)
+            //n, err := conn.Read(buf)
+            //if n == 0 && err != nil { // simplified
+            //    println("-------")
+            //    println(err.Error())
+            //    conn.Close()
+            //    break
+            //}
+            //bufString := string(buf)
+            //bufArr := strings.Split(bufString, "event:BlockHeader")
+            //
+            //println("len is :", len(bufArr))
+            //var start int
+            //var end int
+            //for i := 1; i < len(bufArr); i++ {
+            //    realBuffArr := strings.Split(bufArr[i], "data:")
+            //    if len(realBuffArr) != 2 {
+            //        println("invalid buf string: ", bufString)
+            //        break
+            //    }
+            //    realBuf := []byte(realBuffArr[1])
+            //
+            //    if len(bufArr) > 2 {
+            //        if i == len(bufArr) - 1 {
+            //            start = end + 23
+            //            end = n
+            //        } else if i == 1 {
+            //            start = 23
+            //            end = 23 + len(realBuf)
+            //        } else {
+            //            start = end + 23
+            //            end = start + len(realBuf)
+            //        }
+            //    } else {
+            //        start = 23
+            //        end = n
+            //   }
+            //
+            //    var data Data
+                if err = json.Unmarshal([]byte(arr[1]), &data); err == nil {
                     println("success read", " height:", data.Header.Height, " chainId: ", data.Header.ChainId)
                     height := data.Header.Height
                     chainId := data.Header.ChainId
@@ -496,7 +496,6 @@ func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64, u
                 }
             }
         }
-    }
     //}()
 }
 
