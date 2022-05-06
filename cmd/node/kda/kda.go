@@ -19,7 +19,7 @@ import (
     "strings"
     "time"
 )
-
+const BESTNODE = "kda:bestnode"
 type Node struct {
     RedisClient *redis.Client
     ctx         context.Context
@@ -81,6 +81,8 @@ func (node *Node) Start(config configs.Node, chanData chan interface{}) {
     for _, url := range lanUrls {
         urls = append(urls, url)
     }
+
+    go node.setBestNode(urls)
 
     // 诊断所有节点的健康性,包括将updates数据写入redis内
     for _, url := range urls {
@@ -351,7 +353,6 @@ func (node *Node) GetMiningWork(url string, healthCheck chan int64, account conf
 //
 func (node *Node) GetUpdatesWithFunc(url string, handleConnection func(conn io.ReadCloser, healthCheck chan int64, url string, cancel func()), healthCheck chan int64, cancel func()) (conn *http.Response) {
     for {
-        println("=======")
         request, err := http.NewRequest("GET", "http://"+url+":1848/chainweb/0.0/mainnet01/header/updates", nil)
         request.Header.Add("Connection", "keep-alive")
         request.Header.Add("Pragma", "no-cache")
@@ -395,7 +396,7 @@ func (node *Node) GetUpdatesWithFunc(url string, handleConnection func(conn io.R
 func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64, url string, cancel func()) {
     //go func() {
     reader := bufio.NewReader(conn)
-    var timeStampList []int64
+    //var timeStampList []int64
     for {
         if _, isPrefix, err := reader.ReadLine(); err != nil {
             println("failed to read line:", err.Error())
@@ -453,10 +454,10 @@ func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64, u
                     println("success read")
                     height := data.Header.Height
                     chainId := data.Header.ChainId
-                    timestamp := time.Now().Unix()
+                    timestampMs := time.Now().UnixNano() / 1000000
 
                     key := "kda:" + url + ":" + strconv.FormatInt(height, 10) + ":" + strconv.FormatInt(chainId, 10)
-                    value := strconv.FormatInt(timestamp, 10)
+                    value := strconv.FormatInt(timestampMs, 10)
                     //fmt.Println("key:", key)
                     //fmt.Println("value:", value)
 
@@ -465,22 +466,19 @@ func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64, u
                         fmt.Println("redis set kda data error=", err.Error())
                     }
                     healthCheck <- 1003
-                    if len(timeStampList) > 9 {
-                        // 如果1s内出了超过10个块,则判定不健康
-                        if timeStampList[len(timeStampList)-1]-timeStampList[0] < 2 {
-                            healthCheck <- 0
-                            healthCheck <- 0
-                            healthCheck <- 0
-                        }
-                        timeStampList = timeStampList[1:]
-                        //fmt.Println(healthList)
-                    }
-                    timeStampList = append(timeStampList, timestamp)
+                    //if len(timeStampList) > 9 {
+                    //    // 如果1s内出了超过10个块,则判定不健康
+                    //    if timeStampList[len(timeStampList)-1]-timeStampList[0] < 2 {
+                    //        healthCheck <- 0
+                    //        healthCheck <- 0
+                    //        healthCheck <- 0
+                    //    }
+                    //    timeStampList = timeStampList[1:]
+                    //    //fmt.Println(healthList)
+                    //}
+                    //timeStampList = append(timeStampList, timestampMs)
 
                 } else {
-                    println(len(buf))
-                    println(string(bufArr[1]))
-                    println("4444444")
                     fmt.Printf("An error occurred in the Node:%s, error is %s \n", url, err)
                     //healthCheck <- 0
                 }
@@ -736,4 +734,107 @@ func (node *Node) calculateDelay(urls []string, lanUrls []string, wanUrls []stri
     node.GetAndSetFastestNode(lanUrls, wanUrls)
 
     return nil
+}
+
+func (node *Node) setBestNode(urls []string) {
+    ticker := time.NewTicker(time.Second * 15)
+    for {
+        select {
+        case <- ticker.C:
+            println("==========================", "start choose best node")
+            var healthyUrls []string
+            for _, url := range urls {
+                if node.isHealth(url) == 1 {
+                    healthyUrls = append(healthyUrls, url)
+                }
+            }
+            ts := fmt.Sprintf("%d", time.Now().Unix())
+            if len(healthyUrls) == 0 {
+                println("1111111111")
+                redisOperation.Set(node.RedisClient, BESTNODE, "0:" + ts)
+                break
+            }
+
+            m := make(map[string]int)
+
+            minHeight := 0
+            maxHeight := 0
+            for _, healthyUrl := range healthyUrls {
+                m[healthyUrl] = 0
+                urlKeys, err := redisOperation.Keys(node.RedisClient, "kda:" + healthyUrl + ":").Result()
+                if err != nil {
+                    println("failed to get healthy url keys, err: ", err.Error())
+                    continue
+                }
+                for _, urlKey := range urlKeys {
+                    arr := strings.Split(urlKey, ":")
+                    if len(arr) != 4 {
+                        continue
+                    }
+                    h, err := strconv.Atoi(arr[2])
+                    if err != nil {
+                        continue
+                    }
+                    if minHeight == 0 {
+                        minHeight = h
+                    } else if h < minHeight {
+                        minHeight = h
+                    }
+
+                    if h > maxHeight {
+                        maxHeight = h
+                    }
+                }
+            }
+
+            if maxHeight - minHeight < 10 {
+                redisOperation.Set(node.RedisClient, BESTNODE, "0:" + ts)
+                break
+            }
+
+            for i := minHeight; i < maxHeight - 3; i++ {
+                for j := 0; j < 20; j++ {
+                    var bestNode string
+                    minTs := 1000000000000000
+                    for k := range m {
+                        key := fmt.Sprintf("kda:%s:%d:%d", k, i, j)
+                        tsString, err := redisOperation.Get(node.RedisClient, key).Result()
+                        if err != nil || err == redis.Nil {
+                            println("redis nil result")
+                            println(key)
+                            continue
+                        }
+                        ts, err := strconv.Atoi(tsString)
+                        if err != nil {
+                            continue
+                        }
+                        if ts < minTs {
+                            minTs = ts
+                            bestNode = k
+                        }
+                    }
+                    if _, ok := m[bestNode]; ok {
+
+                        m[bestNode]++
+                    }
+                }
+            }
+            var bestCount int
+            var bestNode string
+            for k, v := range m {
+                println(v)
+               if v > bestCount {
+                   bestCount = v
+                   bestNode = k
+               }
+            }
+            val := fmt.Sprintf("%s:%d", bestNode, time.Now().Unix())
+            redisOperation.Set(node.RedisClient, BESTNODE, val)
+            fmt.Printf("%v", m)
+            for k, v := range m {
+                println(k, ": win :",v)
+            }
+            println("===================", "end choose best node")
+       } 
+    }
 }

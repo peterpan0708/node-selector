@@ -19,8 +19,6 @@ func Quit() {
         switch sig {
         case syscall.SIGQUIT, syscall.SIGTERM:
             log.Panic("SIGQUIT")
-        case syscall.SIGHUP:
-            log.Panic("SIGHUP")
         case syscall.SIGINT:
             log.Panic("SIGINT")
         default:

@@ -93,6 +93,18 @@ func (a *Api) getNode(c echo.Context) error {
     return c.String(http.StatusOK, node)
 }
 
+func (a *Api) getNodeV2(c echo.Context) error {
+    coin := c.Param("coin")
+
+    node, err := redisOperation.Get(a.RedisClient, coin + ":bestnode").Result()
+    if err != nil {
+        fmt.Println("redis.Dial err=", err)
+        return c.String(http.StatusOK, "failed to get kda node")
+    }
+    fmt.Println("node:", node)
+    return c.String(http.StatusOK, node)
+}
+
 //
 // HandleConnection
 //  @Description: 如果正在使用的节点不健康,则汇报
