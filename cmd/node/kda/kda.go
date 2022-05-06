@@ -350,7 +350,7 @@ func (node *Node) GetMiningWork(url string, healthCheck chan int64, account conf
 //  @param healthCheck
 //  @param cancel
 //  @return conn
-//
+//GetUpdatesWithFunc
 func (node *Node) GetUpdatesWithFunc(url string, handleConnection func(conn io.ReadCloser, healthCheck chan int64, url string, cancel func()), healthCheck chan int64, cancel func()) (conn *http.Response) {
     for {
         request, err := http.NewRequest("GET", "http://"+url+":1848/chainweb/0.0/mainnet01/header/updates", nil)
@@ -369,8 +369,7 @@ func (node *Node) GetUpdatesWithFunc(url string, handleConnection func(conn io.R
             log.Fatal(err)
         }
 
-        http_client := &http.Client{}
-        response, err := http_client.Do(request)
+        response, err := http.DefaultClient.Do(request)
         if err != nil {
             println("3333333")
             fmt.Printf("An error occurred in the Node:%s, error is %s \n", url, err)
@@ -398,7 +397,7 @@ func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64, u
     reader := bufio.NewReader(conn)
     //var timeStampList []int64
     for {
-        if _, isPrefix, err := reader.ReadLine(); err != nil {
+        if line, err := reader.ReadString('\n'); err != nil {
             println("failed to read line:", err.Error())
             err := conn.Close()
             if err != nil {
@@ -408,14 +407,27 @@ func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64, u
             //l.ctxCancel()
             cancel()
             return
-        } else if isPrefix {
-            println("buffer size small")
-            conn.Close()
-            return
         } else {
+            //println(len(line))
+            if string(line) == "event:BlockHeader\n" || string(line) == "\n"{
+                //println("skip")
+                continue
+            }
+            //println(string(line))
+            arr := strings.Split(line, "data:")
+            var data Data
+            err = json.Unmarshal([]byte(arr[1]), &data)
+            if err != nil {
+                println(err.Error())
+                continue
+            }
+            println(data.Header.Height, "  ", data.Header.ChainId)
+            continue
             buf := make([]byte, 16384)
             n, err := conn.Read(buf)
             if n == 0 && err != nil { // simplified
+                println("-------")
+                println(err.Error())
                 conn.Close()
                 break
             }
@@ -451,7 +463,7 @@ func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64, u
 
                 var data Data
                 if err = json.Unmarshal(buf[start:end], &data); err == nil {
-                    println("success read")
+                    println("success read", " height:", data.Header.Height, " chainId: ", data.Header.ChainId)
                     height := data.Header.Height
                     chainId := data.Header.ChainId
                     timestampMs := time.Now().UnixNano() / 1000000
@@ -750,7 +762,6 @@ func (node *Node) setBestNode(urls []string) {
             }
             ts := fmt.Sprintf("%d", time.Now().Unix())
             if len(healthyUrls) == 0 {
-                println("1111111111")
                 redisOperation.Set(node.RedisClient, BESTNODE, "0:" + ts)
                 break
             }
