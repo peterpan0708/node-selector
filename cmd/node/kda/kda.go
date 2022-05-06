@@ -465,7 +465,7 @@ func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64, u
                     if err != nil {
                         fmt.Println("redis set kda data error=", err.Error())
                     }
-                    healthCheck <- 1003
+                    //healthCheck <- 1003
                     //if len(timeStampList) > 9 {
                     //    // 如果1s内出了超过10个块,则判定不健康
                     //    if timeStampList[len(timeStampList)-1]-timeStampList[0] < 2 {
