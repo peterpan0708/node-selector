@@ -461,7 +461,7 @@ func (node *Node) HandleConnection(conn io.ReadCloser, healthCheck chan int64, u
                     //fmt.Println("key:", key)
                     //fmt.Println("value:", value)
 
-                    _, err := redisOperation.SetEX(node.RedisClient, key, 3600, value).Result()
+                    _, err := redisOperation.SetEX(node.RedisClient, key, 900, value).Result()
                     if err != nil {
                         fmt.Println("redis set kda data error=", err.Error())
                     }
