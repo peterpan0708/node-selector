@@ -32,6 +32,7 @@ func (a *Api) CreateShortServer(cfg configs.Api) {
         return context.String(http.StatusOK, "node-selector (* ￣︿￣)")
     })
     e.GET("/node/:coin", a.getNode)
+    e.GET("/v2/node/:coin", a.getNodeV2)
     e.Logger.Fatal(e.Start(":" + cfg.ShortPort))
 }
 

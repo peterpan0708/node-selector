@@ -213,7 +213,7 @@ func (node *Node) DiagnoseNode(url string, healthScore chan int64, account confi
 
     // 建立1848 updates 长连接
     ctx, cancel := context.WithCancel(context.Background())
-    node.GetUpdatesWithFunc(url, node.HandleConnection, healthCheck, cancel)
+    go node.GetUpdatesWithFunc(url, node.HandleConnection, healthCheck, cancel)
 
     go func(ctx context.Context) {
         for {
@@ -227,7 +227,7 @@ func (node *Node) DiagnoseNode(url string, healthScore chan int64, account confi
     }(ctx)
 
 
-    time.Sleep(1000 * time.Second)
+    //time.Sleep(1000 * time.Second)
 }
 
 //
@@ -802,7 +802,7 @@ func (node *Node) setBestNode(urls []string) {
                 break
             }
 
-            for i := minHeight; i < maxHeight - 3; i++ {
+            for i := minHeight +3; i < maxHeight - 3; i++ {
                 for j := 0; j < 20; j++ {
                     var bestNode string
                     minTs := 1000000000000000
